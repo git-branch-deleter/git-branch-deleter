@@ -11,4 +11,4 @@ license = "MIT"
 repository = "https://github.com/Enselic/git-branch-deleter"
 
 [dependencies]
-termion = "3.0.0"
+crossterm = "0.29.0"

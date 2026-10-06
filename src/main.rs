@@ -1,14 +1,15 @@
 use std::{
     error::Error,
-    io::{stdin, stdout},
+    io::{self, stdout, Write},
     process::Command,
 };
 
-use std::io::Write;
-
-use termion::raw::IntoRawMode;
-use termion::{clear, input::TermRead};
-use termion::{cursor, event::Key};
+use crossterm::{
+    cursor::MoveTo,
+    event::{self, Event, KeyCode, KeyEvent, KeyModifiers},
+    execute,
+    terminal::{self, Clear, ClearType},
+};
 
 /// Info about a git branch
 #[derive(Debug)]
@@ -42,15 +43,15 @@ struct Selection {
 const MARGIN: &str = "   ";
 
 fn main() -> Result<(), Box<dyn Error>> {
-    let mut keys = stdin().lock().keys();
-    let mut stdout = stdout().lock().into_raw_mode()?;
+    let raw_mode = RawModeGuard::new()?;
+    let mut stdout = stdout().lock();
     let (mut branches, max_branch_name_len) = local_git_branches();
     let mut selection = Selection::new(branches.len() - 1);
 
     // Clear the screen only once to avoid flicker
-    write!(&mut stdout, "{}", clear::All)?;
+    execute!(&mut stdout, Clear(ClearType::All))?;
     loop {
-        write!(&mut stdout, "{}", cursor::Goto::default())?;
+        execute!(&mut stdout, MoveTo(0, 0))?;
 
         print_branches(&mut stdout, &branches, selection.index, max_branch_name_len)?;
 
@@ -58,16 +59,20 @@ fn main() -> Result<(), Box<dyn Error>> {
 
         stdout.flush().unwrap();
 
-        match key_to_action(keys.next().unwrap()?) {
+        let action = match event::read()? {
+            Event::Key(key) => key_to_action(key),
+            _ => Action::None,
+        };
+        match action {
             Action::MoveUp => selection.move_up(),
             Action::MoveDown => selection.move_down(),
             Action::Delete => selected_branch.delete("-d"),
             Action::ForceDelete => selected_branch.delete("-D"),
             Action::Checkout => {
-                write!(&mut stdout, "{}", clear::All)?;
-                write!(&mut stdout, "{}", cursor::Goto::default())?;
+                execute!(&mut stdout, Clear(ClearType::All), MoveTo(0, 0))?;
                 stdout.flush()?;
-                drop(stdout); // Drop stdout to release raw terminal mode
+                drop(stdout);
+                drop(raw_mode);
                 selected_branch.checkout()?;
                 std::io::stdout().lock().flush()?;
                 break; // Auto-quit
@@ -86,18 +91,19 @@ fn print_branches(
     selected: usize,
     max_branch_name_len: usize,
 ) -> std::io::Result<()> {
-    writeln!(stdout, "BRANCHES\r")?;
-    writeln!(stdout, "\r")?;
+    writeln!(stdout, "BRANCHES")?;
+    writeln!(stdout)?;
     for (index, branch) in branches.iter().enumerate() {
-        writeln!(
+        write!(
             stdout,
-            "{}{}{}{MARGIN}{}{}\r",
+            "{}{}{}{MARGIN}{}",
             if selected == index { "-> " } else { "   " },
             branch.name,
             " ".repeat(max_branch_name_len - branch.name.len()),
-            branch.status,
-            clear::AfterCursor
+            branch.status
         )?;
+        execute!(stdout, Clear(ClearType::UntilNewLine))?;
+        writeln!(stdout)?;
     }
 
     Ok(())
@@ -125,15 +131,38 @@ fn local_git_branches() -> (Vec<Branch>, usize) {
     (branches, max_branch_name_len)
 }
 
-fn key_to_action(key: Key) -> Action {
-    match key {
-        Key::Down | Key::Right | Key::Ctrl('n') | Key::Char('j') => Action::MoveDown,
-        Key::Up | Key::Left | Key::Ctrl('p') | Key::Char('k') => Action::MoveUp,
-        Key::Esc | Key::Char('q') | Key::Ctrl('c') => Action::Quit,
-        Key::Delete | Key::Char('d') => Action::Delete,
-        Key::Char('D') => Action::ForceDelete,
-        Key::Char('c' | '\n') => Action::Checkout,
+fn key_to_action(key: KeyEvent) -> Action {
+    match (key.code, key.modifiers) {
+        (KeyCode::Down | KeyCode::Right, _) | (KeyCode::Char('n'), KeyModifiers::CONTROL) => {
+            Action::MoveDown
+        }
+        (KeyCode::Up | KeyCode::Left, _) | (KeyCode::Char('p'), KeyModifiers::CONTROL) => {
+            Action::MoveUp
+        }
+        (KeyCode::Esc, _) | (KeyCode::Char('q'), _) | (KeyCode::Char('c'), KeyModifiers::CONTROL) => {
+            Action::Quit
+        }
+        (KeyCode::Delete, _) | (KeyCode::Char('d'), _) => Action::Delete,
+        (KeyCode::Char('D'), _) => Action::ForceDelete,
+        (KeyCode::Char('c'), _) | (KeyCode::Enter, _) => Action::Checkout,
+        (KeyCode::Char('j'), _) => Action::MoveDown,
+        (KeyCode::Char('k'), _) => Action::MoveUp,
         _ => Action::None,
+    }
+}
+
+struct RawModeGuard;
+
+impl RawModeGuard {
+    fn new() -> io::Result<Self> {
+        terminal::enable_raw_mode()?;
+        Ok(Self)
+    }
+}
+
+impl Drop for RawModeGuard {
+    fn drop(&mut self) {
+        let _ = terminal::disable_raw_mode();
     }
 }
 
