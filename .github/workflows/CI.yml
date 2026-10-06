@@ -69,9 +69,11 @@ jobs:
       matrix:
         os:
           - ubuntu-latest
-    name: cargo test (${{ matrix.os }})
+          - windows-latest
+    name: cargo build and test (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v3
       - uses: Swatinem/rust-cache@v2
+      - run: cargo build --locked
       - run: cargo test --locked

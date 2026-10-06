@@ -139,9 +139,9 @@ fn key_to_action(key: KeyEvent) -> Action {
         (KeyCode::Up | KeyCode::Left, _) | (KeyCode::Char('p'), KeyModifiers::CONTROL) => {
             Action::MoveUp
         }
-        (KeyCode::Esc, _) | (KeyCode::Char('q'), _) | (KeyCode::Char('c'), KeyModifiers::CONTROL) => {
-            Action::Quit
-        }
+        (KeyCode::Esc, _)
+        | (KeyCode::Char('q'), _)
+        | (KeyCode::Char('c'), KeyModifiers::CONTROL) => Action::Quit,
         (KeyCode::Delete, _) | (KeyCode::Char('d'), _) => Action::Delete,
         (KeyCode::Char('D'), _) => Action::ForceDelete,
         (KeyCode::Char('c'), _) | (KeyCode::Enter, _) => Action::Checkout,
