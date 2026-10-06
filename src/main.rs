@@ -86,7 +86,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 }
 
 fn print_branches(
-    stdout: &mut dyn std::io::Write,
+    stdout: &mut impl Write,
     branches: &[Branch],
     selected: usize,
     max_branch_name_len: usize,
@@ -139,12 +139,12 @@ fn key_to_action(key: KeyEvent) -> Action {
         (KeyCode::Up | KeyCode::Left, _) | (KeyCode::Char('p'), KeyModifiers::CONTROL) => {
             Action::MoveUp
         }
-        (KeyCode::Esc, _)
-        | (KeyCode::Char('q'), _)
-        | (KeyCode::Char('c'), KeyModifiers::CONTROL) => Action::Quit,
-        (KeyCode::Delete, _) | (KeyCode::Char('d'), _) => Action::Delete,
+        (KeyCode::Esc | KeyCode::Char('q'), _) | (KeyCode::Char('c'), KeyModifiers::CONTROL) => {
+            Action::Quit
+        }
+        (KeyCode::Delete | KeyCode::Char('d'), _) => Action::Delete,
         (KeyCode::Char('D'), _) => Action::ForceDelete,
-        (KeyCode::Char('c'), _) | (KeyCode::Enter, _) => Action::Checkout,
+        (KeyCode::Char('c') | KeyCode::Enter, _) => Action::Checkout,
         (KeyCode::Char('j'), _) => Action::MoveDown,
         (KeyCode::Char('k'), _) => Action::MoveUp,
         _ => Action::None,
@@ -168,11 +168,11 @@ impl Drop for RawModeGuard {
 
 impl Branch {
     fn from_line(line: impl AsRef<str>) -> Self {
-        let status = line
-            .as_ref()
-            .starts_with('*')
-            .then(|| "(current branch)".to_owned())
-            .unwrap_or_default();
+        let status = if line.as_ref().starts_with('*') {
+            "(current branch)".to_owned()
+        } else {
+            String::new()
+        };
 
         Self {
             name: line.as_ref().split_at(2).1.to_owned(),
