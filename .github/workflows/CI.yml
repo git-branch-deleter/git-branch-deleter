@@ -1,4 +1,6 @@
 name: CI
+permissions:
+  contents: none # Minimal default permissions
 
 on:
   workflow_call: # From .github/workflows/Release.yml
@@ -24,11 +26,24 @@ jobs:
 
   lint:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read # For actions/checkout
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-audit
+          checksum: true
+          fallback: none
+      # Use a fixed version for lints to avoid CI failure with new versions. Bump as needed.
+      - run: lint_toolchain=1.98 ; rustup install $lint_toolchain --profile default && rustup default $lint_toolchain
       - run: bash scripts/lint.sh
 
   build-and-test-binaries:
+    permissions:
+      contents: read # For actions/checkout
     name: build and test binary (${{ matrix.target }})
     strategy:
       fail-fast: false
@@ -45,7 +60,7 @@ jobs:
             binary: git-branch-deleter
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v6
       - run: cargo test --locked
       - run: rustup target add ${{ matrix.target }}
       - run: cargo build --release --locked --target ${{ matrix.target }}
