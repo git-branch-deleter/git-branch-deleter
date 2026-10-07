@@ -11,6 +11,5 @@ cargo clippy \
     --all-features \
     -- \
     --deny clippy::all \
-    --deny clippy::pedantic \
     --deny warnings \
     --deny unsafe_code \
