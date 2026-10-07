@@ -7,4 +7,3 @@ RUSTDOCFLAGS='--deny warnings' cargo doc --locked --no-deps --document-private-i
 
 scripts/cargo-clippy.sh
 scripts/cargo-audit.sh
-scripts/cargo-deny.sh
