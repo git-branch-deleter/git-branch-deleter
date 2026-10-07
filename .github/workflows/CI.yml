@@ -1,4 +1,6 @@
 name: CI
+permissions:
+  contents: none # Minimal default permissions
 
 on:
   workflow_call: # From .github/workflows/Release.yml
@@ -17,61 +19,53 @@ jobs:
     name: all-jobs
     runs-on: ubuntu-latest
     needs:
-      - cargo-fmt
-      - cargo-doc
-      - cargo-clippy
-      - cargo-audit
-      - cargo-deny
-      - cargo-test
+      - lint
+      - build-and-test-binaries
     steps:
       - run: jq --exit-status 'all(.result == "success")' <<< '${{ toJson(needs) }}'
 
-  cargo-fmt:
-    name: cargo fmt -- --check
+  lint:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read # For actions/checkout
     steps:
-      - uses: actions/checkout@v3
-      - run: cargo fmt -- --check
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-audit
+          checksum: true
+          fallback: none
+      # Use a fixed version for lints to avoid CI failure with new versions. Bump as needed.
+      - run: lint_toolchain=1.98 ; rustup install $lint_toolchain --profile default && rustup default $lint_toolchain
+      - run: bash scripts/lint.sh
 
-  cargo-doc:
-    name: RUSTDOCFLAGS='--deny warnings' cargo doc
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v3
-      - uses: Swatinem/rust-cache@v2
-      - run: RUSTDOCFLAGS='--deny warnings' cargo doc --locked --no-deps --document-private-items
-
-  cargo-clippy:
-    name: cargo clippy -- --deny clippy::all --deny clippy::pedantic ...
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v3
-      - uses: Swatinem/rust-cache@v2
-      - run: scripts/cargo-clippy.sh
-
-  cargo-audit:
-    name: cargo audit
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v3
-      - run: scripts/cargo-audit.sh
-
-  cargo-deny:
-    name: cargo deny
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v3
-      - uses: EmbarkStudios/cargo-deny-action@v1
-
-  cargo-test:
+  build-and-test-binaries:
+    permissions:
+      contents: read # For actions/checkout
+    name: build and test binary (${{ matrix.target }})
     strategy:
       fail-fast: false
       matrix:
-        os:
-          - ubuntu-latest
-    name: cargo test (${{ matrix.os }})
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            binary: git-branch-deleter
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            binary: git-branch-deleter.exe
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            binary: git-branch-deleter
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v3
-      - uses: Swatinem/rust-cache@v2
+      - uses: actions/checkout@v6
       - run: cargo test --locked
+      - run: rustup target add ${{ matrix.target }}
+      - run: cargo build --release --locked --target ${{ matrix.target }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: git-branch-deleter-${{ matrix.target }}
+          path: target/${{ matrix.target }}/release/${{ matrix.binary }}
+          if-no-files-found: error

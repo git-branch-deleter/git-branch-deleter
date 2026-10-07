@@ -1,14 +1,15 @@
 use std::{
     error::Error,
-    io::{stdin, stdout},
+    io::{stdout, Write},
     process::Command,
 };
 
-use std::io::Write;
-
-use termion::raw::IntoRawMode;
-use termion::{clear, input::TermRead};
-use termion::{cursor, event::Key};
+use crossterm::{
+    cursor::MoveTo,
+    event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers},
+    execute,
+    terminal::{disable_raw_mode, enable_raw_mode, Clear, ClearType},
+};
 
 /// Info about a git branch
 #[derive(Debug)]
@@ -42,35 +43,51 @@ struct Selection {
 const MARGIN: &str = "   ";
 
 fn main() -> Result<(), Box<dyn Error>> {
-    let mut keys = stdin().lock().keys();
-    let mut stdout = stdout().lock().into_raw_mode()?;
+    let mut terminal = Terminal::new()?;
     let (mut branches, max_branch_name_len) = local_git_branches();
-    let mut selection = Selection::new(branches.len() - 1);
+    let mut selection = Selection::new(branches.len().saturating_sub(1));
 
-    // Clear the screen only once to avoid flicker
-    write!(&mut stdout, "{}", clear::All)?;
+    terminal.clear()?;
     loop {
-        write!(&mut stdout, "{}", cursor::Goto::default())?;
+        execute!(terminal.stdout, MoveTo(0, 0))?;
 
-        print_branches(&mut stdout, &branches, selection.index, max_branch_name_len)?;
+        print_branches(
+            &mut terminal.stdout,
+            &branches,
+            selection.index,
+            max_branch_name_len,
+        )?;
 
-        let selected_branch = branches.get_mut(selection.index).unwrap();
+        terminal.stdout.flush()?;
 
-        stdout.flush().unwrap();
+        let Event::Key(key) = event::read()? else {
+            continue;
+        };
+        if key.kind == KeyEventKind::Release {
+            continue;
+        }
 
-        match key_to_action(keys.next().unwrap()?) {
+        match key_to_action(key) {
             Action::MoveUp => selection.move_up(),
             Action::MoveDown => selection.move_down(),
-            Action::Delete => selected_branch.delete("-d"),
-            Action::ForceDelete => selected_branch.delete("-D"),
+            Action::Delete => {
+                if let Some(selected_branch) = branches.get_mut(selection.index) {
+                    selected_branch.delete("-d");
+                }
+            }
+            Action::ForceDelete => {
+                if let Some(selected_branch) = branches.get_mut(selection.index) {
+                    selected_branch.delete("-D");
+                }
+            }
             Action::Checkout => {
-                write!(&mut stdout, "{}", clear::All)?;
-                write!(&mut stdout, "{}", cursor::Goto::default())?;
-                stdout.flush()?;
-                drop(stdout); // Drop stdout to release raw terminal mode
-                selected_branch.checkout()?;
-                std::io::stdout().lock().flush()?;
-                break; // Auto-quit
+                if let Some(selected_branch) = branches.get_mut(selection.index) {
+                    terminal.clear()?;
+                    terminal.restore()?;
+                    selected_branch.checkout()?;
+                    stdout().lock().flush()?;
+                    break;
+                }
             }
             Action::Quit => break,
             Action::None => {}
@@ -80,8 +97,8 @@ fn main() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-fn print_branches(
-    stdout: &mut dyn std::io::Write,
+fn print_branches<W: Write>(
+    stdout: &mut W,
     branches: &[Branch],
     selected: usize,
     max_branch_name_len: usize,
@@ -91,13 +108,13 @@ fn print_branches(
     for (index, branch) in branches.iter().enumerate() {
         writeln!(
             stdout,
-            "{}{}{}{MARGIN}{}{}\r",
+            "{}{}{}{MARGIN}{}\r",
             if selected == index { "-> " } else { "   " },
             branch.name,
             " ".repeat(max_branch_name_len - branch.name.len()),
             branch.status,
-            clear::AfterCursor
         )?;
+        execute!(stdout, Clear(ClearType::UntilNewLine))?;
     }
 
     Ok(())
@@ -125,25 +142,64 @@ fn local_git_branches() -> (Vec<Branch>, usize) {
     (branches, max_branch_name_len)
 }
 
-fn key_to_action(key: Key) -> Action {
-    match key {
-        Key::Down | Key::Right | Key::Ctrl('n') | Key::Char('j') => Action::MoveDown,
-        Key::Up | Key::Left | Key::Ctrl('p') | Key::Char('k') => Action::MoveUp,
-        Key::Esc | Key::Char('q') | Key::Ctrl('c') => Action::Quit,
-        Key::Delete | Key::Char('d') => Action::Delete,
-        Key::Char('D') => Action::ForceDelete,
-        Key::Char('c' | '\n') => Action::Checkout,
+fn key_to_action(key: KeyEvent) -> Action {
+    match (key.code, key.modifiers) {
+        (KeyCode::Down | KeyCode::Right | KeyCode::Char('j'), _)
+        | (KeyCode::Char('n'), KeyModifiers::CONTROL) => Action::MoveDown,
+        (KeyCode::Up | KeyCode::Left | KeyCode::Char('k'), _)
+        | (KeyCode::Char('p'), KeyModifiers::CONTROL) => Action::MoveUp,
+        (KeyCode::Esc | KeyCode::Char('q'), _) | (KeyCode::Char('c'), KeyModifiers::CONTROL) => {
+            Action::Quit
+        }
+        (KeyCode::Delete | KeyCode::Char('d'), _) => Action::Delete,
+        (KeyCode::Char('D'), _) => Action::ForceDelete,
+        (KeyCode::Char('c') | KeyCode::Enter, _) => Action::Checkout,
         _ => Action::None,
+    }
+}
+
+struct Terminal {
+    stdout: std::io::Stdout,
+    raw_mode_enabled: bool,
+}
+
+impl Terminal {
+    fn new() -> std::io::Result<Self> {
+        enable_raw_mode()?;
+        Ok(Self {
+            stdout: stdout(),
+            raw_mode_enabled: true,
+        })
+    }
+
+    fn clear(&mut self) -> std::io::Result<()> {
+        execute!(self.stdout, Clear(ClearType::All), MoveTo(0, 0))
+    }
+
+    fn restore(&mut self) -> std::io::Result<()> {
+        if self.raw_mode_enabled {
+            disable_raw_mode()?;
+            self.raw_mode_enabled = false;
+        }
+        Ok(())
+    }
+}
+
+impl Drop for Terminal {
+    fn drop(&mut self) {
+        if self.raw_mode_enabled {
+            let _ = disable_raw_mode();
+        }
     }
 }
 
 impl Branch {
     fn from_line(line: impl AsRef<str>) -> Self {
-        let status = line
-            .as_ref()
-            .starts_with('*')
-            .then(|| "(current branch)".to_owned())
-            .unwrap_or_default();
+        let status = if line.as_ref().starts_with('*') {
+            "(current branch)".to_owned()
+        } else {
+            String::new()
+        };
 
         Self {
             name: line.as_ref().split_at(2).1.to_owned(),

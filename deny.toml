@@ -1,9 +1,0 @@
-[licenses]
-version = 2
-allow = [
-    "MIT",
-]
-
-[bans]
-wildcards = "deny"
-multiple-versions = "allow"
